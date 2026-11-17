@@ -108,6 +108,12 @@ $common = @(
     "-DCMAKE_C_FLAGS=$cflags", "-DCMAKE_CXX_FLAGS=$cflags /EHsc /GR"
 )
 
+function Find-InstalledLib([string]$pattern) {
+    # Meson/MSVC naming and layout vary (dav1d.lib vs libdav1d.lib, lib\ vs lib\x64\): search.
+    Get-ChildItem -Recurse -File (Join-Path $Prefix 'lib') -Filter $pattern -ErrorAction SilentlyContinue |
+        Sort-Object Length -Descending | Select-Object -First 1
+}
+
 function Build-CMake([string]$name, [string]$src, [string[]]$extra, [string]$target = '') {
     $b = Join-Path $buildRoot $name
     if (Test-Path $b) { Remove-Item -Recurse -Force $b }
@@ -238,7 +244,18 @@ needs_exe_wrapper = true
     }
     Invoke-Checked 'dav1d compile' { meson compile -C $b --jobs $env:NUMBER_OF_PROCESSORS | Out-Host }
     Invoke-Checked 'dav1d install' { meson install -C $b | Out-Host }
-    if (-not (Test-Path (Join-Path $Prefix 'lib\dav1d.lib'))) { throw 'dav1d.lib was not installed' }
+    $found = Find-InstalledLib '*dav1d*.lib'
+    if (-not $found) {
+        Write-Host 'installed files under lib:'
+        Get-ChildItem -Recurse (Join-Path $Prefix 'lib') | Select-Object -ExpandProperty FullName | Out-Host
+        throw 'no dav1d .lib was installed'
+    }
+    if ($found.Name -ne 'dav1d.lib') {
+        Copy-Item $found.FullName (Join-Path $Prefix 'lib\dav1d.lib') -Force
+        $found = Get-Item (Join-Path $Prefix 'lib\dav1d.lib')
+    }
+    $script:dav1dLibPath = $found.FullName
+    Write-Host "dav1d library: $($script:dav1dLibPath)"
     Copy-License $s 'dav1d' @('COPYING')
 } catch {
     # Fallback 1: build dav1d with the *desktop* MSVC environment (vcvars64), where a compiled exe can
@@ -258,7 +275,14 @@ needs_exe_wrapper = true
             '-Denable_tests=false -Denable_tools=false -Denable_examples=false -Denable_docs=false -Denable_asm=true && ' +
             'meson compile -C "' + $b + '" && meson install -C "' + $b + '"'
         Invoke-Checked 'dav1d (desktop MSVC)' { cmd /c $line | Out-Host }
-        if (-not (Test-Path (Join-Path $Prefix 'lib\dav1d.lib'))) { throw 'dav1d.lib missing after desktop build' }
+        $found = Find-InstalledLib '*dav1d*.lib'
+        if (-not $found) { throw 'no dav1d .lib after the desktop build' }
+        if ($found.Name -ne 'dav1d.lib') {
+            Copy-Item $found.FullName (Join-Path $Prefix 'lib\dav1d.lib') -Force
+            $found = Get-Item (Join-Path $Prefix 'lib\dav1d.lib')
+        }
+        $script:dav1dLibPath = $found.FullName
+        Write-Host "dav1d library: $($script:dav1dLibPath)"
         Copy-License $s 'dav1d' @('COPYING')
     } catch {
         # Fallback 2: libaom (CMake project, already builds under the UWP CMake settings used above).
@@ -270,9 +294,10 @@ needs_exe_wrapper = true
             '-DENABLE_TOOLS=OFF', '-DENABLE_EXAMPLES=OFF', '-DENABLE_TESTDATA=OFF', '-DENABLE_NASM=ON',
             '-DCONFIG_AV1_ENCODER=0', '-DCONFIG_AV1_DECODER=1', '-DCONFIG_PIC=0', '-DENABLE_WERROR=OFF') | Out-Null
         Copy-License $aom 'aom' @('LICENSE', 'PATENTS')
-        $aomLib = Get-ChildItem (Join-Path $Prefix 'lib') -Filter 'aom*.lib' | Select-Object -First 1
+        $aomLib = Find-InstalledLib '*aom*.lib'
         if (-not $aomLib) { throw 'libaom did not install a .lib' }
-        Copy-Item $aomLib.FullName (Join-Path $Prefix 'lib\aom.lib')
+        Write-Host "aom library: $($aomLib.FullName)"
+        if ($aomLib.Name -ne 'aom.lib') { Copy-Item $aomLib.FullName (Join-Path $Prefix 'lib\aom.lib') }
     }
 }
 Write-Host "AVIF decoder backend: $avifBackend"
@@ -296,7 +321,7 @@ if ($avifBackend -eq 'dav1d') {
     $avifArgs += @('-DAVIF_CODEC_DAV1D=ON', '-DAVIF_CODEC_AOM=OFF', '-DAVIF_CODEC_LIBGAV1=OFF',
         '-DAVIF_CODEC_RAV1E=OFF', '-DAVIF_CODEC_SVT=OFF',
         "-DDAV1D_INCLUDE_DIR=$(Join-Path $Prefix 'include')",
-        "-DDAV1D_LIBRARY=$(Join-Path $Prefix 'lib\dav1d.lib')")
+        "-DDAV1D_LIBRARY=$($script:dav1dLibPath)")
 } else {
     $avifArgs += @('-DAVIF_CODEC_AOM=ON', '-DAVIF_CODEC_DAV1D=OFF', '-DAVIF_CODEC_LIBGAV1=OFF',
         '-DAVIF_CODEC_RAV1E=OFF', '-DAVIF_CODEC_SVT=OFF', '-DAVIF_CODEC_AOM_DECODE=ON',
