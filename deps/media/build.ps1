@@ -191,9 +191,28 @@ try {
     }
     $b = Join-Path $buildRoot 'dav1d'
     if (Test-Path $b) { Remove-Item -Recurse -Force $b }
-    Write-Host '=== dav1d (meson, UWP env: link WindowsApp.lib for the sanity check)'
+    # meson runs a compiled sanity exe. A UWP/App-container exe cannot be launched from a normal
+    # process, so declare a cross build with needs_exe_wrapper: meson then only compiles it.
+    $crossFile = Join-Path $buildRoot 'msvc-uwp-cross.txt'
+    @'
+[binaries]
+c = 'cl'
+cpp = 'cl'
+ar = 'lib'
+
+[host_machine]
+system = 'windows'
+cpu_family = 'x86_64'
+cpu = 'x86_64'
+endian = 'little'
+
+[properties]
+needs_exe_wrapper = true
+'@ | Set-Content -Path $crossFile -Encoding ascii
+    Write-Host '=== dav1d (meson, cross file: do not run sanity exe; link WindowsApp.lib)'
     Invoke-Checked 'dav1d setup' {
-        meson setup $b $s --buildtype=release --default-library=static "--prefix=$Prefix" `
+        meson setup $b $s "--cross-file=$crossFile" --buildtype=release --default-library=static `
+            "--prefix=$Prefix" `
             -Denable_tests=false -Denable_tools=false -Denable_examples=false -Denable_docs=false `
             -Denable_asm=true `
             '-Dc_args=/DWINAPI_FAMILY=WINAPI_FAMILY_APP' `
@@ -204,18 +223,39 @@ try {
     if (-not (Test-Path (Join-Path $Prefix 'lib\dav1d.lib'))) { throw 'dav1d.lib was not installed' }
     Copy-License $s 'dav1d' @('COPYING')
 } catch {
-    # Fallback: libaom (encoder+decoder) is a CMake project, so it already builds under the same UWP
-    # CMake settings as the rest of the media deps (all within WindowsApp.lib).
-    Write-Host "WARNING: dav1d build failed, falling back to libaom. Reason: $($_.Exception.Message)"
-    $avifBackend = 'aom'
-    $aom = Get-Source 'aom' 'aom'
-    Build-CMake 'aom' $aom @('-DAOM_TARGET_CPU=x64', '-DENABLE_DOCS=OFF', '-DENABLE_TESTS=OFF',
-        '-DENABLE_TOOLS=OFF', '-DENABLE_EXAMPLES=OFF', '-DENABLE_TESTDATA=OFF', '-DENABLE_NASM=ON',
-        '-DCONFIG_AV1_ENCODER=0', '-DCONFIG_AV1_DECODER=1', '-DCONFIG_PIC=0', '-DENABLE_WERROR=OFF') | Out-Null
-    Copy-License $aom 'aom' @('LICENSE', 'PATENTS')
-    $aomLib = Get-ChildItem (Join-Path $Prefix 'lib') -Filter 'aom*.lib' | Select-Object -First 1
-    if (-not $aomLib) { throw 'libaom did not install a .lib' }
-    Copy-Item $aomLib.FullName (Join-Path $Prefix 'lib\aom.lib')
+    # Fallback 1: build dav1d with the *desktop* MSVC environment (vcvars64), where a compiled exe can
+    # actually run. The resulting static lib is plain C with no OS calls, so it links into the UWP host
+    # like zlib/libpng do.
+    Write-Host "WARNING: dav1d (UWP cross) failed: $($_.Exception.Message)"
+    Write-Host '--- retrying dav1d with the desktop MSVC environment'
+    try {
+        $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+        $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+        if (-not $vsPath) { throw 'vswhere found no VC toolset' }
+        $vcvars = Join-Path $vsPath 'VC\Auxiliary\Build\vcvars64.bat'
+        if (-not (Test-Path $vcvars)) { throw "missing $vcvars" }
+        if (Test-Path $b) { Remove-Item -Recurse -Force $b }
+        $line = 'set "CL=" && set "WINAPI_FAMILY=" && call "' + $vcvars + '" >nul && ' +
+            'meson setup "' + $b + '" "' + $s + '" --buildtype=release --default-library=static "--prefix=' + $Prefix + '" ' +
+            '-Denable_tests=false -Denable_tools=false -Denable_examples=false -Denable_docs=false -Denable_asm=true && ' +
+            'meson compile -C "' + $b + '" && meson install -C "' + $b + '"'
+        Invoke-Checked 'dav1d (desktop MSVC)' { cmd /c $line | Out-Host }
+        if (-not (Test-Path (Join-Path $Prefix 'lib\dav1d.lib'))) { throw 'dav1d.lib missing after desktop build' }
+        Copy-License $s 'dav1d' @('COPYING')
+    } catch {
+        # Fallback 2: libaom (CMake project, already builds under the UWP CMake settings used above).
+        Write-Host "WARNING: dav1d (desktop MSVC) failed: $($_.Exception.Message)"
+        Write-Host '--- falling back to libaom'
+        $avifBackend = 'aom'
+        $aom = Get-Source 'aom' 'aom'
+        Build-CMake 'aom' $aom @('-DAOM_TARGET_CPU=x64', '-DENABLE_DOCS=OFF', '-DENABLE_TESTS=OFF',
+            '-DENABLE_TOOLS=OFF', '-DENABLE_EXAMPLES=OFF', '-DENABLE_TESTDATA=OFF', '-DENABLE_NASM=ON',
+            '-DCONFIG_AV1_ENCODER=0', '-DCONFIG_AV1_DECODER=1', '-DCONFIG_PIC=0', '-DENABLE_WERROR=OFF') | Out-Null
+        Copy-License $aom 'aom' @('LICENSE', 'PATENTS')
+        $aomLib = Get-ChildItem (Join-Path $Prefix 'lib') -Filter 'aom*.lib' | Select-Object -First 1
+        if (-not $aomLib) { throw 'libaom did not install a .lib' }
+        Copy-Item $aomLib.FullName (Join-Path $Prefix 'lib\aom.lib')
+    }
 }
 Write-Host "AVIF decoder backend: $avifBackend"
 
