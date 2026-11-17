@@ -301,14 +301,17 @@ needs_exe_wrapper = true
 }
 Write-Host "AVIF decoder backend: $avifBackend"
 
-# The host project (RenpyUWP.vcxproj) links dav1d.lib unconditionally; when the aom fallback is in
-# use there is no dav1d at all, so provide an empty stand-in library instead of touching the vcxproj.
-if ($avifBackend -eq 'aom') {
+# RenpyUWP.vcxproj links avif.lib;dav1d.lib;aom.lib unconditionally (one fixed list beats conditional
+# MSBuild items). Only one backend is actually built, so give the missing one an empty stand-in library.
+$missingLib = if ($avifBackend -eq 'aom') { 'dav1d.lib' } else { 'aom.lib' }
+$missingPath = Join-Path $Prefix "lib\$missingLib"
+if (-not (Test-Path $missingPath)) {
     $eb = Join-Path $buildRoot 'emptylib'
     New-Item -ItemType Directory -Force $eb | Out-Null
-    Set-Content -Path (Join-Path $eb 'empty.c') -Value '/* stand-in: libavif was built with libaom */' -Encoding ascii
-    Invoke-Checked 'empty dav1d obj' { cl /c /nologo "/Fo$eb\empty.obj" "$eb\empty.c" | Out-Host }
-    Invoke-Checked 'empty dav1d lib' { lib /nologo "/out:$(Join-Path $Prefix 'lib\dav1d.lib')" "$eb\empty.obj" | Out-Host }
+    Set-Content -Path (Join-Path $eb 'empty.c') -Value '/* stand-in: the other AV1 backend was not built */' -Encoding ascii
+    Invoke-Checked "empty $missingLib obj" { cl /c /nologo "/Fo$eb\empty.obj" "$eb\empty.c" | Out-Host }
+    Invoke-Checked "empty $missingLib lib" { lib /nologo "/out:$missingPath" "$eb\empty.obj" | Out-Host }
+    Write-Host "stand-in library created: $missingPath"
 }
 
 # --- libavif (decode only) -----------------------------------------------------------------------
