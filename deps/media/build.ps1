@@ -244,18 +244,19 @@ needs_exe_wrapper = true
     }
     Invoke-Checked 'dav1d compile' { meson compile -C $b --jobs $env:NUMBER_OF_PROCESSORS | Out-Host }
     Invoke-Checked 'dav1d install' { meson install -C $b | Out-Host }
-    $found = Find-InstalledLib '*dav1d*.lib'
-    if (-not $found) {
-        Write-Host 'installed files under lib:'
-        Get-ChildItem -Recurse (Join-Path $Prefix 'lib') | Select-Object -ExpandProperty FullName | Out-Host
-        throw 'no dav1d .lib was installed'
+    # dav1d marks its library target `install : false`, so `meson install` only installs the headers and
+    # dav1d.pc: the archive has to be taken from the build tree.
+    $built = Get-ChildItem -Recurse -File $b -Filter '*dav1d*.lib' -ErrorAction SilentlyContinue |
+        Sort-Object Length -Descending | Select-Object -First 1
+    if (-not $built) {
+        Write-Host 'no .lib in the build tree; contents:'
+        Get-ChildItem -Recurse -File $b -Include *.lib, *.a, *.dll -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty FullName | Out-Host
+        throw 'dav1d produced no library in the build tree'
     }
-    if ($found.Name -ne 'dav1d.lib') {
-        Copy-Item $found.FullName (Join-Path $Prefix 'lib\dav1d.lib') -Force
-        $found = Get-Item (Join-Path $Prefix 'lib\dav1d.lib')
-    }
-    $script:dav1dLibPath = $found.FullName
-    Write-Host "dav1d library: $($script:dav1dLibPath)"
+    Copy-Item $built.FullName (Join-Path $Prefix 'lib\dav1d.lib') -Force
+    $script:dav1dLibPath = Join-Path $Prefix 'lib\dav1d.lib'
+    Write-Host "dav1d library: $($script:dav1dLibPath)  (from $($built.FullName))"
     Copy-License $s 'dav1d' @('COPYING')
 } catch {
     # Fallback 1: build dav1d with the *desktop* MSVC environment (vcvars64), where a compiled exe can
@@ -275,14 +276,12 @@ needs_exe_wrapper = true
             '-Denable_tests=false -Denable_tools=false -Denable_examples=false -Denable_docs=false -Denable_asm=true && ' +
             'meson compile -C "' + $b + '" && meson install -C "' + $b + '"'
         Invoke-Checked 'dav1d (desktop MSVC)' { cmd /c $line | Out-Host }
-        $found = Find-InstalledLib '*dav1d*.lib'
-        if (-not $found) { throw 'no dav1d .lib after the desktop build' }
-        if ($found.Name -ne 'dav1d.lib') {
-            Copy-Item $found.FullName (Join-Path $Prefix 'lib\dav1d.lib') -Force
-            $found = Get-Item (Join-Path $Prefix 'lib\dav1d.lib')
-        }
-        $script:dav1dLibPath = $found.FullName
-        Write-Host "dav1d library: $($script:dav1dLibPath)"
+        $built = Get-ChildItem -Recurse -File $b -Filter '*dav1d*.lib' -ErrorAction SilentlyContinue |
+            Sort-Object Length -Descending | Select-Object -First 1
+        if (-not $built) { throw 'dav1d produced no library in the build tree (desktop MSVC)' }
+        Copy-Item $built.FullName (Join-Path $Prefix 'lib\dav1d.lib') -Force
+        $script:dav1dLibPath = Join-Path $Prefix 'lib\dav1d.lib'
+        Write-Host "dav1d library: $($script:dav1dLibPath)  (from $($built.FullName))"
         Copy-License $s 'dav1d' @('COPYING')
     } catch {
         # Fallback 2: libaom (CMake project, already builds under the UWP CMake settings used above).

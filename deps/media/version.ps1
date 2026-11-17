@@ -15,9 +15,10 @@ $MediaDeps = [ordered]@{
     # with dav1d as the AV1 decoder (faster than aom and decode-only, so no encoder to build).
     dav1d        = @{ ver = '1.4.3'; file = 'dav1d-1.4.3.tar.gz'; url = 'https://code.videolan.org/videolan/dav1d/-/archive/1.4.3/dav1d-1.4.3.tar.gz'; sha = '88a023e58d955e0886faf49c72940e0e90914a948a8e60c1326ce3e09e7a6099' }
     libavif      = @{ ver = '0.11.1'; file = 'libavif-0.11.1.tar.gz'; url = 'https://github.com/AOMediaCodec/libavif/archive/refs/tags/v0.11.1.tar.gz'; sha = '0eb49965562a0e5e5de58389650d434cff32af84c34185b6c9b7b2fccae06d4e' }
-    # Fallback decoder only (used if meson/dav1d cannot be built in the UWP environment). No pinned
-    # hash yet: the build prints the computed SHA-256 so it can be pinned here after the first run.
-    aom          = @{ ver = '3.5.0'; file = 'aom-3.5.0.tar.gz'; url = 'https://aomedia.googlesource.com/aom/+archive/refs/tags/v3.5.0.tar.gz'; sha = '03a8b05b174b92a87bd1ace88539da2eb183398dc46ee786cb789ca226f151ee' }
+    # Fallback decoder only (used if dav1d cannot be built). googlesource regenerates its tar.gz per
+    # request (embedded timestamps), so this archive has no reproducible SHA-256: verification is skipped
+    # and the build prints the computed hash.
+    aom          = @{ ver = '3.5.0'; file = 'aom-3.5.0.tar.gz'; url = 'https://aomedia.googlesource.com/aom/+archive/refs/tags/v3.5.0.tar.gz'; sha = '' }
     sdl2_image   = @{ ver = '2.6.2'; file = 'SDL2_image-2.6.2.tar.gz'; url = 'https://github.com/libsdl-org/SDL_image/releases/download/release-2.6.2/SDL2_image-2.6.2.tar.gz'; sha = '48355fb4d8d00bac639cd1c4f4a7661c4afef2c212af60b340e06b7059814777' }
     ffmpeg       = @{ ver = '4.3.1'; file = 'ffmpeg-4.3.1.tar.gz'; url = 'https://ffmpeg.org/releases/ffmpeg-4.3.1.tar.gz'; sha = '45035f15d6f192772de2309c846e1d60472694f479679354a39c699719e53772' }
 }
