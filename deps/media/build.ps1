@@ -29,7 +29,7 @@ $buildRoot = New-Item -ItemType Directory -Force (Join-Path $WorkDir 'build')
 New-Item -ItemType Directory -Force (Join-Path $Prefix 'licenses') | Out-Null
 $Prefix = (Resolve-Path $Prefix).Path
 
-function Get-Source([string]$key) {
+function Get-Source([string]$key, [string]$into = '') {
     $d = $MediaDeps[$key]
     $tar = Join-Path $tars $d.file
     if (-not (Test-Path $tar)) {
@@ -43,17 +43,23 @@ function Get-Source([string]$key) {
         Write-Host "Downloaded $($d.file) in $([int]((Get-Date) - $t0).TotalSeconds) s"
     }
     $h = (Get-FileHash -Algorithm SHA256 $tar).Hash.ToLowerInvariant()
-    if ($h -ne $d.sha) { throw "SHA-256 mismatch for $($d.file): $h" }
-    $dir = Join-Path $srcRoot ($d.file -replace '\.tar\.(gz|xz|bz2)$', '')
-    if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
-    # Extract with Python's tarfile (gz/bz2/xz built in): the runner's tar hung for ~2 hours on
-    # harfbuzz-8.0.1.tar.xz in two CI runs with no output.
+    if ($d.sha) {
+        if ($h -ne $d.sha) { throw "SHA-256 mismatch for $($d.file): $h" }
+    } else {
+        # No pinned hash yet (candidate dependency): print it so it can be pinned in version.ps1.
+        Write-Host "WARNING: no pinned SHA-256 for $($d.file); computed $h"
+    }
+    # Some archives (googlesource) have no top-level directory: $into gives them one.
+    $target = if ($into) { Join-Path $srcRoot $into } else { $srcRoot }
+    if (Test-Path $target) { Remove-Item -Recurse -Force $target }
+    New-Item -ItemType Directory -Force $target | Out-Null
     $t0 = Get-Date
     Invoke-Checked "extract $($d.file)" {
-        python -I -c "import sys, tarfile; tarfile.open(sys.argv[1]).extractall(sys.argv[2], filter='data')" $tar $srcRoot
+        python -I -c "import sys, tarfile; tarfile.open(sys.argv[1]).extractall(sys.argv[2], filter='data')" $tar $target
     }
     Write-Host "Extracted $($d.file) in $([int]((Get-Date) - $t0).TotalSeconds) s"
-    return $dir
+    if ($into) { return $target }
+    return (Join-Path $target ($d.file -replace '\.tar\.(gz|xz|bz2)$', ''))
 }
 
 function Copy-License([string]$src, [string]$name, [string[]]$candidates) {
@@ -156,36 +162,83 @@ Copy-License $s 'fribidi' @('COPYING')
 # --- dav1d (AV1 decoder used by libavif; meson + ninja + NASM) -----------------------------------
 # Why dav1d and not aom: we only need to *decode* AVIF, dav1d decodes ~2x faster than libaom on the
 # same files and has no encoder to build (aom + its runtime tables would add minutes to every run).
-$s = Get-Source 'dav1d'
-foreach ($tool in 'meson', 'ninja') {
-    if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-        throw "$tool is not in PATH (needed by dav1d): python -m pip install --quiet meson ninja"
+#
+# CI gotcha (run #1, 2026-11-17): the whole job runs inside the UWP dev shell, so the CRT is the App
+# variant. meson's compiler sanity check links a console exe with /MD and dies with
+#   MSVCRT.lib(utility_app.obj) : unresolved external symbol __imp_RoInitialize ...
+# => "Compiler cl cannot compile programs". Fix: teach the sanity check to link WindowsApp.lib (which
+# exports RoInitialize and every other kernel32 entry point a UWP app container gets) and compile with
+# WINAPI_FAMILY=WINAPI_FAMILY_APP so the headers match the App CRT.
+$avifBackend = 'dav1d'
+$s = $null
+$b = $null
+try {
+    $s = Get-Source 'dav1d'
+    foreach ($tool in 'meson', 'ninja') {
+        if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+            throw "$tool is not in PATH (needed by dav1d): python -m pip install --quiet meson ninja"
+        }
     }
+    $b = Join-Path $buildRoot 'dav1d'
+    if (Test-Path $b) { Remove-Item -Recurse -Force $b }
+    Write-Host '=== dav1d (meson, UWP env: link WindowsApp.lib for the sanity check)'
+    Invoke-Checked 'dav1d setup' {
+        meson setup $b $s --buildtype=release --default-library=static "--prefix=$Prefix" `
+            -Denable_tests=false -Denable_tools=false -Denable_examples=false -Denable_docs=false `
+            -Denable_asm=true `
+            '-Dc_args=/DWINAPI_FAMILY=WINAPI_FAMILY_APP' `
+            '-Dc_link_args=WindowsApp.lib' | Out-Host
+    }
+    Invoke-Checked 'dav1d compile' { meson compile -C $b --jobs $env:NUMBER_OF_PROCESSORS | Out-Host }
+    Invoke-Checked 'dav1d install' { meson install -C $b | Out-Host }
+    if (-not (Test-Path (Join-Path $Prefix 'lib\dav1d.lib'))) { throw 'dav1d.lib was not installed' }
+    Copy-License $s 'dav1d' @('COPYING')
+} catch {
+    # Fallback: libaom (encoder+decoder) is a CMake project, so it already builds under the same UWP
+    # CMake settings as the rest of the media deps (all within WindowsApp.lib).
+    Write-Host "WARNING: dav1d build failed, falling back to libaom. Reason: $($_.Exception.Message)"
+    $avifBackend = 'aom'
+    $aom = Get-Source 'aom' 'aom'
+    Build-CMake 'aom' $aom @('-DAOM_TARGET_CPU=x64', '-DENABLE_DOCS=OFF', '-DENABLE_TESTS=OFF',
+        '-DENABLE_TOOLS=OFF', '-DENABLE_EXAMPLES=OFF', '-DENABLE_TESTDATA=OFF', '-DENABLE_NASM=ON',
+        '-DCONFIG_AV1_ENCODER=0', '-DCONFIG_AV1_DECODER=1', '-DCONFIG_PIC=0', '-DENABLE_WERROR=OFF') | Out-Null
+    Copy-License $aom 'aom' @('LICENSE', 'PATENTS')
+    $aomLib = Get-ChildItem (Join-Path $Prefix 'lib') -Filter 'aom*.lib' | Select-Object -First 1
+    if (-not $aomLib) { throw 'libaom did not install a .lib' }
+    Copy-Item $aomLib.FullName (Join-Path $Prefix 'lib\aom.lib')
 }
-$b = Join-Path $buildRoot 'dav1d'
-if (Test-Path $b) { Remove-Item -Recurse -Force $b }
-Write-Host '=== dav1d'
-Invoke-Checked 'dav1d setup' {
-    meson setup $b $s --buildtype=release --default-library=static "--prefix=$Prefix" `
-        -Denable_tests=false -Denable_tools=false -Denable_examples=false -Denable_docs=false `
-        -Denable_asm=true | Out-Host
-}
-Invoke-Checked 'dav1d compile' { meson compile -C $b --jobs $env:NUMBER_OF_PROCESSORS | Out-Host }
-Invoke-Checked 'dav1d install' { meson install -C $b | Out-Host }
-Copy-License $s 'dav1d' @('COPYING')
+Write-Host "AVIF decoder backend: $avifBackend"
 
-# --- libavif (decode only, dav1d backend) --------------------------------------------------------
+# The host project (RenpyUWP.vcxproj) links dav1d.lib unconditionally; when the aom fallback is in
+# use there is no dav1d at all, so provide an empty stand-in library instead of touching the vcxproj.
+if ($avifBackend -eq 'aom') {
+    $eb = Join-Path $buildRoot 'emptylib'
+    New-Item -ItemType Directory -Force $eb | Out-Null
+    Set-Content -Path (Join-Path $eb 'empty.c') -Value '/* stand-in: libavif was built with libaom */' -Encoding ascii
+    Invoke-Checked 'empty dav1d obj' { cl /c /nologo "/Fo$eb\empty.obj" "$eb\empty.c" | Out-Host }
+    Invoke-Checked 'empty dav1d lib' { lib /nologo "/out:$(Join-Path $Prefix 'lib\dav1d.lib')" "$eb\empty.obj" | Out-Host }
+}
+
+# --- libavif (decode only) -----------------------------------------------------------------------
 $s = Get-Source 'libavif'
-Build-CMake 'libavif' $s @('-DBUILD_SHARED_LIBS=OFF', '-DAVIF_ENABLE_WERROR=OFF',
-    '-DAVIF_CODEC_DAV1D=ON', '-DAVIF_CODEC_AOM=OFF', '-DAVIF_CODEC_LIBGAV1=OFF',
-    '-DAVIF_CODEC_RAV1E=OFF', '-DAVIF_CODEC_SVT=OFF',
-    '-DAVIF_BUILD_APPS=OFF', '-DAVIF_BUILD_EXAMPLES=OFF', '-DAVIF_BUILD_TESTS=OFF', '-DAVIF_BUILD_MAN_PAGES=OFF',
-    '-DAVIF_ENABLE_GTEST=OFF',
-    "-DDAV1D_INCLUDE_DIR=$(Join-Path $Prefix 'include')",
-    "-DDAV1D_LIBRARY=$(Join-Path $Prefix 'lib\dav1d.lib')") | Out-Null
+$avifArgs = @('-DBUILD_SHARED_LIBS=OFF', '-DAVIF_ENABLE_WERROR=OFF',
+    '-DAVIF_BUILD_APPS=OFF', '-DAVIF_BUILD_EXAMPLES=OFF', '-DAVIF_BUILD_TESTS=OFF',
+    '-DAVIF_BUILD_MAN_PAGES=OFF', '-DAVIF_ENABLE_GTEST=OFF')
+if ($avifBackend -eq 'dav1d') {
+    $avifArgs += @('-DAVIF_CODEC_DAV1D=ON', '-DAVIF_CODEC_AOM=OFF', '-DAVIF_CODEC_LIBGAV1=OFF',
+        '-DAVIF_CODEC_RAV1E=OFF', '-DAVIF_CODEC_SVT=OFF',
+        "-DDAV1D_INCLUDE_DIR=$(Join-Path $Prefix 'include')",
+        "-DDAV1D_LIBRARY=$(Join-Path $Prefix 'lib\dav1d.lib')")
+} else {
+    $avifArgs += @('-DAVIF_CODEC_AOM=ON', '-DAVIF_CODEC_DAV1D=OFF', '-DAVIF_CODEC_LIBGAV1=OFF',
+        '-DAVIF_CODEC_RAV1E=OFF', '-DAVIF_CODEC_SVT=OFF', '-DAVIF_CODEC_AOM_DECODE=ON',
+        '-DAVIF_CODEC_AOM_ENCODE=OFF',
+        "-DAOM_INCLUDE_DIR=$(Join-Path $Prefix 'include')",
+        "-DAOM_LIBRARY=$(Join-Path $Prefix 'lib\aom.lib')")
+}
+Build-CMake 'libavif' $s $avifArgs | Out-Null
 Copy-License $s 'libavif' @('LICENSE')
 if (-not (Test-Path (Join-Path $Prefix 'lib\avif.lib'))) { throw 'libavif.lib was not installed' }
-if (-not (Test-Path (Join-Path $Prefix 'lib\dav1d.lib'))) { throw 'dav1d.lib was not installed' }
 
 # --- SDL2_image (our CMake) ---------------------------------------------------------------------
 $s = Get-Source 'sdl2_image'
