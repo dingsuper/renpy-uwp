@@ -49,17 +49,27 @@ function Get-Source([string]$key, [string]$into = '') {
         # No pinned hash yet (candidate dependency): print it so it can be pinned in version.ps1.
         Write-Host "WARNING: no pinned SHA-256 for $($d.file); computed $h"
     }
-    # Some archives (googlesource) have no top-level directory: $into gives them one.
-    $target = if ($into) { Join-Path $srcRoot $into } else { $srcRoot }
-    if (Test-Path $target) { Remove-Item -Recurse -Force $target }
-    New-Item -ItemType Directory -Force $target | Out-Null
+    # Archives with a top-level directory are unpacked next to each other in $srcRoot (several builds
+    # reuse the same tree, e.g. freetype twice), so only that archive's own directory is removed.
+    # Archives without one (googlesource) are unpacked into the dedicated $into directory instead.
+    if ($into) {
+        $target = Join-Path $srcRoot $into
+        if (Test-Path $target) { Remove-Item -Recurse -Force $target }
+        New-Item -ItemType Directory -Force $target | Out-Null
+        $extractTo = $target
+    } else {
+        $extractTo = $srcRoot
+        $own = Join-Path $srcRoot ($d.file -replace '\.tar\.(gz|xz|bz2)$', '')
+        if (Test-Path $own) { Remove-Item -Recurse -Force $own }
+        $archiveDir = $own
+    }
     $t0 = Get-Date
     Invoke-Checked "extract $($d.file)" {
-        python -I -c "import sys, tarfile; tarfile.open(sys.argv[1]).extractall(sys.argv[2], filter='data')" $tar $target
+        python -I -c "import sys, tarfile; tarfile.open(sys.argv[1]).extractall(sys.argv[2], filter='data')" $tar $extractTo
     }
     Write-Host "Extracted $($d.file) in $([int]((Get-Date) - $t0).TotalSeconds) s"
-    if ($into) { return $target }
-    return (Join-Path $target ($d.file -replace '\.tar\.(gz|xz|bz2)$', ''))
+    if ($into) { return $extractTo }
+    return $archiveDir
 }
 
 function Copy-License([string]$src, [string]$name, [string[]]$candidates) {
