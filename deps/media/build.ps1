@@ -79,6 +79,24 @@ function Copy-License([string]$src, [string]$name, [string[]]$candidates) {
     }
 }
 
+# --- tools: NASM must be on PATH (libjpeg-turbo and dav1d assemble with it) -----------------------
+# Run #4 (2026-11-17) failed in libjpeg with "'NASM-NOTFOUND' is not recognized": the choco step was a
+# no-op because the image already ships NASM somewhere that is not on PATH for pwsh steps. Discover it.
+if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
+    $candidates = @("$env:ProgramFiles\NASM", "${env:ProgramFiles(x86)}\NASM",
+        "$env:ProgramData\chocolatey\bin", "$env:ChocolateyInstall\bin",
+        "$env:SystemDrive\ProgramData\chocolatey\lib\nasm\tools\nasm")
+    foreach ($dir in $candidates) {
+        if ($dir -and (Test-Path (Join-Path $dir 'nasm.exe'))) {
+            $env:PATH = "$dir;$env:PATH"
+            Write-Host "NASM found at $dir (added to PATH)"
+            break
+        }
+    }
+}
+if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) { throw 'NASM not found (install it or add it to PATH)' }
+& nasm -v
+
 $zinc = Join-Path $ZlibPrefix 'include\zlib'
 $zlib = Join-Path $ZlibPrefix 'lib\zlibstatic.lib'
 $cflags = '/DWIN32 /D_WINDOWS /W3 /sdl- /D_CRT_SECURE_NO_WARNINGS'
