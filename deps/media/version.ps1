@@ -11,6 +11,10 @@ $MediaDeps = [ordered]@{
     freetype     = @{ ver = '2.13.3'; file = 'freetype-2.13.3.tar.gz'; url = 'https://download.savannah.gnu.org/releases/freetype/freetype-2.13.3.tar.gz'; sha = '5c3a8e78f7b24c20b25b54ee575d6daa40007a5f4eea2845861c3409b3021747' }
     harfbuzz     = @{ ver = '8.0.1'; file = 'harfbuzz-8.0.1.tar.xz'; url = 'https://github.com/harfbuzz/harfbuzz/releases/download/8.0.1/harfbuzz-8.0.1.tar.xz'; sha = 'c1ce780acd385569f25b9a29603d1d5bc71e6940e55bfdd4f7266fad50e42620' }
     fribidi      = @{ ver = '1.0.7'; file = 'fribidi-1.0.7.tar.bz2'; url = 'https://github.com/fribidi/fribidi/releases/download/v1.0.7/fribidi-1.0.7.tar.bz2'; sha = '5ab5f21e9f2fc57b4b40f8ea8f14dba78a5cc46d9cf94bc5e00a58e6886a935d' }
+    # AVIF support (decode only): libavif 0.11.1 = the version renpy-build pins for Ren'Py 8.5.3,
+    # with dav1d as the AV1 decoder (faster than aom and decode-only, so no encoder to build).
+    dav1d        = @{ ver = '1.4.3'; file = 'dav1d-1.4.3.tar.gz'; url = 'https://code.videolan.org/videolan/dav1d/-/archive/1.4.3/dav1d-1.4.3.tar.gz'; sha = '88a023e58d955e0886faf49c72940e0e90914a948a8e60c1326ce3e09e7a6099' }
+    libavif      = @{ ver = '0.11.1'; file = 'libavif-0.11.1.tar.gz'; url = 'https://github.com/AOMediaCodec/libavif/archive/refs/tags/v0.11.1.tar.gz'; sha = '0eb49965562a0e5e5de58389650d434cff32af84c34185b6c9b7b2fccae06d4e' }
     sdl2_image   = @{ ver = '2.6.2'; file = 'SDL2_image-2.6.2.tar.gz'; url = 'https://github.com/libsdl-org/SDL_image/releases/download/release-2.6.2/SDL2_image-2.6.2.tar.gz'; sha = '48355fb4d8d00bac639cd1c4f4a7661c4afef2c212af60b340e06b7059814777' }
     ffmpeg       = @{ ver = '4.3.1'; file = 'ffmpeg-4.3.1.tar.gz'; url = 'https://ffmpeg.org/releases/ffmpeg-4.3.1.tar.gz'; sha = '45035f15d6f192772de2309c846e1d60472694f479679354a39c699719e53772' }
 }

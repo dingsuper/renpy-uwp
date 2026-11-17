@@ -153,6 +153,40 @@ $s = Get-Source 'fribidi'
 Build-CMake 'fribidi' (Join-Path $here 'fribidi') @("-DFRIBIDI_SRC=$s") | Out-Null
 Copy-License $s 'fribidi' @('COPYING')
 
+# --- dav1d (AV1 decoder used by libavif; meson + ninja + NASM) -----------------------------------
+# Why dav1d and not aom: we only need to *decode* AVIF, dav1d decodes ~2x faster than libaom on the
+# same files and has no encoder to build (aom + its runtime tables would add minutes to every run).
+$s = Get-Source 'dav1d'
+foreach ($tool in 'meson', 'ninja') {
+    if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+        throw "$tool is not in PATH (needed by dav1d): python -m pip install --quiet meson ninja"
+    }
+}
+$b = Join-Path $buildRoot 'dav1d'
+if (Test-Path $b) { Remove-Item -Recurse -Force $b }
+Write-Host '=== dav1d'
+Invoke-Checked 'dav1d setup' {
+    meson setup $b $s --buildtype=release --default-library=static "--prefix=$Prefix" `
+        -Denable_tests=false -Denable_tools=false -Denable_examples=false -Denable_docs=false `
+        -Denable_asm=true | Out-Host
+}
+Invoke-Checked 'dav1d compile' { meson compile -C $b --jobs $env:NUMBER_OF_PROCESSORS | Out-Host }
+Invoke-Checked 'dav1d install' { meson install -C $b | Out-Host }
+Copy-License $s 'dav1d' @('COPYING')
+
+# --- libavif (decode only, dav1d backend) --------------------------------------------------------
+$s = Get-Source 'libavif'
+Build-CMake 'libavif' $s @('-DBUILD_SHARED_LIBS=OFF', '-DAVIF_ENABLE_WERROR=OFF',
+    '-DAVIF_CODEC_DAV1D=ON', '-DAVIF_CODEC_AOM=OFF', '-DAVIF_CODEC_LIBGAV1=OFF',
+    '-DAVIF_CODEC_RAV1E=OFF', '-DAVIF_CODEC_SVT=OFF',
+    '-DAVIF_BUILD_APPS=OFF', '-DAVIF_BUILD_EXAMPLES=OFF', '-DAVIF_BUILD_TESTS=OFF', '-DAVIF_BUILD_MAN_PAGES=OFF',
+    '-DAVIF_ENABLE_GTEST=OFF',
+    "-DDAV1D_INCLUDE_DIR=$(Join-Path $Prefix 'include')",
+    "-DDAV1D_LIBRARY=$(Join-Path $Prefix 'lib\dav1d.lib')") | Out-Null
+Copy-License $s 'libavif' @('LICENSE')
+if (-not (Test-Path (Join-Path $Prefix 'lib\avif.lib'))) { throw 'libavif.lib was not installed' }
+if (-not (Test-Path (Join-Path $Prefix 'lib\dav1d.lib'))) { throw 'dav1d.lib was not installed' }
+
 # --- SDL2_image (our CMake) ---------------------------------------------------------------------
 $s = Get-Source 'sdl2_image'
 Build-CMake 'sdl2_image' (Join-Path $here 'sdl2_image') @("-DSDL2_IMAGE_SRC=$s", "-DSDL2_DIR_PREFIX=$SdlPrefix",
