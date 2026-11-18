@@ -103,8 +103,7 @@ public:
         // Ask the system to map logical pixels 1:1 onto physical ones. Best effort: on PCs
         // (100% scaling) or older systems this may be a no-op or simply fail - log it and move on.
         try {
-            bool ok = winrt::Windows::UI::ViewManagement::ApplicationViewScaling::TrySetDisableLayoutScaling(
-                winrt::Windows::UI::Core::CoreWindow::GetForCurrentThread(), true);
+            bool ok = winrt::Windows::UI::ViewManagement::ApplicationViewScaling::TrySetDisableLayoutScaling(true);
             float dpi = winrt::Windows::Graphics::Display::DisplayInformation::GetForCurrentView().LogicalDpi();
             RLOG("layout scaling disabled: %d (LogicalDpi now %.1f)", ok ? 1 : 0, dpi);
         } catch (...) {
