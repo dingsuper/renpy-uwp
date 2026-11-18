@@ -1,0 +1,40 @@
+--- a/src/video/winrt/SDL_winrtvideo.cpp
++++ b/src/video/winrt/SDL_winrtvideo.cpp
+@@ -364,6 +364,37 @@
+             SDL_DisplayMode sdlMode;
+             WINRT_DXGIModeToSDLDisplayMode(&dxgiModes[i], &sdlMode);
+             SDL_AddDisplayMode(&display, &sdlMode);
++        }
++    }
++
++    /* renpy-uwp: on Xbox, DXGI and CoreWindow both reflect the logical 1920x1080 layer, while the
++       real output is the HDMI mode (e.g. 3840x2160 @ 119.88 Hz). Ren'Py reads SDL's desktop mode
++       as its physical resolution, so override it with the HDMI raw size when the Xbox-only HDMI
++       API is present and disagrees with DXGI. Mode list otherwise stays untouched. */
++    {
++        try {
++            auto hdmi = Windows::Graphics::Display::Core::HdmiDisplayInformation::GetForCurrentView();
++            if (hdmi) {
++                auto hdmiMode = hdmi->GetCurrentDisplayMode();
++                if (hdmiMode) {
++                    unsigned int hw = hdmiMode->ResolutionWidthInRawPixels;
++                    unsigned int hh = hdmiMode->ResolutionHeightInRawPixels;
++                    double hh_hz = hdmiMode->RefreshRate;
++                    if ((unsigned int)display.desktop_mode.w != hw || (unsigned int)display.desktop_mode.h != hh) {
++                        SDL_DisplayMode rawMode;
++                        SDL_zero(rawMode);
++                        rawMode.w = (int)hw;
++                        rawMode.h = (int)hh;
++                        rawMode.refresh_rate = (int)(hh_hz + 0.5);
++                        rawMode.format = display.desktop_mode.format;
++                        display.desktop_mode = rawMode;
++                        display.current_mode = rawMode;
++                        SDL_AddDisplayMode(&display, &rawMode);
++                    }
++                }
++            }
++        } catch (...) {
++            /* Not on Xbox (or no HDMI capability): keep the DXGI-derived mode. */
+         }
+     }
+ 
