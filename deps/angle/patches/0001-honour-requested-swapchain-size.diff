@@ -1,0 +1,35 @@
+--- a/src/libANGLE/renderer/d3d/d3d11/winrt/CoreWindowNativeWindow.cpp
++++ b/src/libANGLE/renderer/d3d/d3d11/winrt/CoreWindowNativeWindow.cpp
+@@ -242,7 +242,12 @@
+     }
+ 
+     DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {0};
+-    if (RunningOnXbox())
++    // renpy-uwp: honour the size the EGL caller asked for. The upstream Xbox branch forced the
++    // swapchain to the HDMI mode size, which (a) resets the GPU when the output is 4K and the game
++    // wants less, and (b) made any sub-4K game surface cover only a corner of the screen. With
++    // DXGI_SCALING_STRETCH (set below) a smaller swapchain is stretched to the full output, and a
++    // same-size request is a 1:1 blit. Keep the HDMI size only as a fallback for zero requests.
++    if (width == 0 || height == 0)
+     {
+         swapChainDesc.Width  = GetWidth();
+         swapChainDesc.Height = GetHeight();
+@@ -301,14 +306,10 @@
+     HRESULT result = coreWindow->get_Bounds(&bounds);
+     if (SUCCEEDED(result))
+     {
+-        if (RunningOnXbox())
+-        {
+-            *windowSize = {(float)GetWidth(), (float)GetHeight()};
+-        }
+-        else
+-        {
+-            *windowSize = {ConvertDipsToPixels(bounds.Width), ConvertDipsToPixels(bounds.Height)};
+-        }
++        // renpy-uwp: same policy as createSwapChain - report the real CoreWindow size in physical
++        // pixels (as the classic path does). The Xbox branch overrode it with the HDMI raw size,
++        // which desynchronized mClientRect from the requested swapchain size after our patch.
++        *windowSize = {ConvertDipsToPixels(bounds.Width), ConvertDipsToPixels(bounds.Height)};
+         
+     }
+ 

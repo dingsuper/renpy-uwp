@@ -46,6 +46,15 @@ Push-Location $src
 try {
     Invoke-Checked 'fetch angle' { git fetch -q --depth 1 $AngleUrl $AngleCommit }
     Invoke-Checked 'checkout angle' { git checkout -q FETCH_HEAD }
+    # Local patches (e.g. honour the requested swapchain size on Xbox - see patches/*.diff).
+    $patchDir = Join-Path $PSScriptRoot 'patches'
+    if (Test-Path $patchDir) {
+        foreach ($p in Get-ChildItem $patchDir -Filter *.diff | Sort-Object Name) {
+            Write-Host "applying $($p.Name)"
+            git apply --whitespace=nowarn $p.FullName
+            if ($LASTEXITCODE -ne 0) { throw "patch $($p.Name) failed to apply" }
+        }
+    }
     Invoke-Checked 'bootstrap' { python scripts/bootstrap.py }
     Invoke-Checked 'gclient sync' { cmd /c "gclient sync --no-history --shallow -j 8" }
 

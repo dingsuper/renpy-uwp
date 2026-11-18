@@ -162,9 +162,12 @@ public:
         // Xbox (CoreWindowNativeWindow.cpp), so a 4K output gives a 3840x2160 swapchain, which resets the
         // GPU (docs/RESEARCH.md section 15): keep "system" until ANGLE honours a requested size (milestone 5).
         std::string hdmi = ReadIniValue("hdmi", "system");
-        RLOG("output: renpy-uwp.ini hdmi=%s", hdmi.c_str());
+        // "keep" requires the patched ANGLE (deps/angle/patches/0001-*.diff): the swapchain then
+        // honours the app-requested size, so the output mode no longer has to drop below 1440p.
+        bool keepOutput = (hdmi == "keep");
+        RLOG("output: renpy-uwp.ini hdmi=%s%s", hdmi.c_str(), keepOutput ? " (output untouched)" : "");
         if (haveHdmi && hdmi == "4k" && !ApplyPolicy()) return 1;
-        if (haveHdmi && hdmi != "4k" && renpyuwp::display::Current().height > 1440) {
+        if (haveHdmi && !keepOutput && hdmi != "4k" && renpyuwp::display::Current().height > 1440) {
             // The ANGLE swapchain follows the HDMI mode; a 4K output leaves the 1920x1080 game surface
             // in a corner, so drop to 1080p first. Try 60 Hz, then 50 Hz (many PAL-region TVs list
             // 1080p50 but not 1080p60 - observed on the 2026-11-18 Xbox test bench).
