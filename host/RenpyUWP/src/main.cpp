@@ -17,10 +17,12 @@
 #include <winrt/Windows.ApplicationModel.Core.h>
 #include <winrt/Windows.ApplicationModel.h>
 #include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Graphics.Display.h>
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.System.Profile.h>
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.Core.h>
+#include <winrt/Windows.UI.ViewManagement.h>
 
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
@@ -95,6 +97,19 @@ public:
         }
         RLOG("SDL video driver: %s", SDL_GetCurrentVideoDriver());
         LogSdlDisplays();
+
+        // Xbox: UWP apps run inside a scaled layer (usually 150% on Series X|S) anchored at the
+        // top-left, so a 1920x1080 logical CoreWindow lands in a small corner of the 4K screen.
+        // Ask the system to map logical pixels 1:1 onto physical ones. Best effort: on PCs
+        // (100% scaling) or older systems this may be a no-op or simply fail - log it and move on.
+        try {
+            bool ok = winrt::Windows::UI::ViewManagement::ApplicationViewScaling::TrySetDisableLayoutScaling(
+                winrt::Windows::UI::Core::CoreWindow::GetForCurrentThread(), true);
+            float dpi = winrt::Windows::Graphics::Display::DisplayInformation::GetForCurrentView().LogicalDpi();
+            RLOG("layout scaling disabled: %d (LogicalDpi now %.1f)", ok ? 1 : 0, dpi);
+        } catch (...) {
+            RLOG("layout scaling: TrySetDisableLayoutScaling unavailable on this platform");
+        }
 
         m_window = SDL_CreateWindow("Ren'Py UWP", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 1920, 1080, 0);
         if (!m_window) {
