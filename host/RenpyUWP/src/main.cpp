@@ -165,10 +165,18 @@ public:
         RLOG("output: renpy-uwp.ini hdmi=%s", hdmi.c_str());
         if (haveHdmi && hdmi == "4k" && !ApplyPolicy()) return 1;
         if (haveHdmi && hdmi != "4k" && renpyuwp::display::Current().height > 1440) {
+            // The ANGLE swapchain follows the HDMI mode; a 4K output leaves the 1920x1080 game surface
+            // in a corner, so drop to 1080p first. Try 60 Hz, then 50 Hz (many PAL-region TVs list
+            // 1080p50 but not 1080p60 - observed on the 2026-11-18 Xbox test bench).
             renpyuwp::display::Mode active{};
             bool ok = renpyuwp::display::RequestCandidate(kFallbackCandidate, [this] { PumpEvents(); }, active);
-            RLOG("output: system mode is above 1440p (ANGLE would create a GPU-resetting swapchain); 1080p60 %s",
-                 ok ? "applied" : "request FAILED");
+            const char* which = "1080p60";
+            if (!ok) {
+                ok = renpyuwp::display::RequestCandidate(kFallbackCandidate2, [this] { PumpEvents(); }, active);
+                which = "1080p50";
+            }
+            RLOG("output: system mode is above 1440p (ANGLE would create a GPU-resetting swapchain); %s %s",
+                 which, ok ? "applied" : "request FAILED");
         }
 
         // Python owns the window while it runs (pygame display; later Ren'Py): SDL on WinRT supports a
@@ -220,7 +228,8 @@ private:
     // 2560x1440 swapchain (60 fps: UWP composition limit). Falls back to 1920x1080 @ 60 Hz on any
     // device loss or stall, and logs why.
     static constexpr int kPolicyCandidate = 0;    // 3840x2160 @ 120 Hz
-    static constexpr int kFallbackCandidate = 4;  // 1920x1080 @ 60 Hz
+    static constexpr int kFallbackCandidate = 4;   // 1920x1080 @ 60 Hz
+    static constexpr int kFallbackCandidate2 = 5;  // 1920x1080 @ 50 Hz (PAL-region TVs)
     static constexpr uint32_t kPolicyW = 2560, kPolicyH = 1440;
     static constexpr double kMinFps = 50.0;
 
