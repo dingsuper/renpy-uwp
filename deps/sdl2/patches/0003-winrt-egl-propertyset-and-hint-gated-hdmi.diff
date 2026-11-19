@@ -53,7 +53,7 @@
      if (SDL_AddVideoDisplay(&display, SDL_FALSE) < 0) {
          goto done;
      }
-@@ -694,14 +733,39 @@
+@@ -694,14 +733,40 @@
              /* Attempt to create a window surface using newer versions of
               * ANGLE/WinRT:
               */
@@ -66,12 +66,13 @@
 +            propertySet->Insert(ANGLE_EGLNativeWindowTypeProperty, data->coreWindow.Get());
 +            SDL_VideoDisplay *desktopDisplay = SDL_GetDisplayForWindow(window);
 +            if (desktopDisplay) {
-+                /* ANGLE reads this value as PropertyType_Size, so box the Size with
-+                   PropertyValue::CreateSize (a bare ref new Size fails to insert). */
++                /* ANGLE reads this value as PropertyType_Size, so box it with
++                   PropertyValue::CreateSize(Size) (C++/CX: one Size argument). */
++                Windows::Foundation::Size renderSize;
++                renderSize.Width = (float)desktopDisplay->desktop_mode.w;
++                renderSize.Height = (float)desktopDisplay->desktop_mode.h;
 +                propertySet->Insert(ANGLE_EGLRenderSurfaceSizeProperty,
-+                                    Windows::Foundation::PropertyValue::CreateSize(
-+                                        (float)desktopDisplay->desktop_mode.w,
-+                                        (float)desktopDisplay->desktop_mode.h));
++                                    Windows::Foundation::PropertyValue::CreateSize(renderSize));
 +            }
 +            IInspectable * propertySetAsIInspectable = reinterpret_cast<IInspectable *>(propertySet);
              data->egl_surface = _this->egl_data->eglCreateWindowSurface(
