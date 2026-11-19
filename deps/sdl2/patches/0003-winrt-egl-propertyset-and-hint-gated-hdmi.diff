@@ -53,7 +53,7 @@
      if (SDL_AddVideoDisplay(&display, SDL_FALSE) < 0) {
          goto done;
      }
-@@ -694,14 +733,37 @@
+@@ -694,14 +733,39 @@
              /* Attempt to create a window surface using newer versions of
               * ANGLE/WinRT:
               */
@@ -66,8 +66,10 @@
 +            propertySet->Insert(ANGLE_EGLNativeWindowTypeProperty, data->coreWindow.Get());
 +            SDL_VideoDisplay *desktopDisplay = SDL_GetDisplayForWindow(window);
 +            if (desktopDisplay) {
++                /* ANGLE reads this value as PropertyType_Size, so box the Size with
++                   PropertyValue::CreateSize (a bare ref new Size fails to insert). */
 +                propertySet->Insert(ANGLE_EGLRenderSurfaceSizeProperty,
-+                                    ref new Windows::Foundation::Size(
++                                    Windows::Foundation::PropertyValue::CreateSize(
 +                                        (float)desktopDisplay->desktop_mode.w,
 +                                        (float)desktopDisplay->desktop_mode.h));
 +            }
