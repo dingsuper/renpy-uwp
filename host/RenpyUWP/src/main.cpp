@@ -165,6 +165,11 @@ public:
         // "keep" requires the patched ANGLE (deps/angle/patches/0001-*.diff): the swapchain then
         // honours the app-requested size, so the output mode no longer has to drop below 1440p.
         bool keepOutput = (hdmi == "keep");
+        // Opt the patched SDL into HDMI-raw desktop mode reporting + ANGLE property-set surface
+        // sizing (deps/sdl2/patches/0003-*.diff) ONLY for hdmi=keep. In the system/4k modes SDL
+        // keeps upstream behaviour (1080p logical desktop), matching the output mode this host
+        // applies.
+        SDL_SetHint("SDL_WINRT_HDMI_DESKTOP_MODE", keepOutput ? "1" : "0");
         RLOG("output: renpy-uwp.ini hdmi=%s%s", hdmi.c_str(), keepOutput ? " (output untouched)" : "");
         if (haveHdmi && hdmi == "4k" && !ApplyPolicy()) return 1;
         if (haveHdmi && !keepOutput && hdmi != "4k" && renpyuwp::display::Current().height > 1440) {

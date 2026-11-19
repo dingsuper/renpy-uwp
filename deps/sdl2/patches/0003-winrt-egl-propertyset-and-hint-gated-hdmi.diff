@@ -1,0 +1,96 @@
+--- a/src/video/winrt/SDL_winrtvideo.cpp
++++ b/src/video/winrt/SDL_winrtvideo.cpp
+@@ -99,6 +99,11 @@
+ /* SDL-internal globals: */
+ SDL_Window * WINRT_GlobalSDLWindow = NULL;
+ 
++
++/* renpy-uwp: ANGLE/WinRT EGL property names (from ANGLE's include/angle_windowsstore.h; the SDL
++   build does not include that header, so redeclare the exact same string literals here). */
++#define ANGLE_EGLNativeWindowTypeProperty     L"EGLNativeWindowTypeProperty"
++#define ANGLE_EGLRenderSurfaceSizeProperty    L"EGLRenderSurfaceSizeProperty"
+ 
+ /* WinRT driver bootstrap functions */
+ 
+@@ -367,6 +372,40 @@
+         }
+     }
+ 
++    /* renpy-uwp: on Xbox, DXGI and CoreWindow both reflect the logical 1920x1080 layer, while the
++       real output is the HDMI mode (e.g. 3840x2160 @ 119.88 Hz). Ren'Py reads SDL's desktop mode
++       as its physical resolution, so override it with the HDMI raw size when the Xbox-only HDMI
++       API is present and disagrees with DXGI. Gated behind the SDL hint
++       "SDL_WINRT_HDMI_DESKTOP_MODE"=1 so the IsroTaxo host opts in only for hdmi=keep; with the
++       hint unset this block is a no-op and behaviour matches upstream SDL. Mode list otherwise
++       stays untouched. */
++    if (SDL_GetHintBoolean("SDL_WINRT_HDMI_DESKTOP_MODE", SDL_FALSE)) {
++        try {
++            auto hdmi = Windows::Graphics::Display::Core::HdmiDisplayInformation::GetForCurrentView();
++            if (hdmi) {
++                auto hdmiMode = hdmi->GetCurrentDisplayMode();
++                if (hdmiMode) {
++                    unsigned int hw = hdmiMode->ResolutionWidthInRawPixels;
++                    unsigned int hh = hdmiMode->ResolutionHeightInRawPixels;
++                    double hh_hz = hdmiMode->RefreshRate;
++                    if ((unsigned int)display.desktop_mode.w != hw || (unsigned int)display.desktop_mode.h != hh) {
++                        SDL_DisplayMode rawMode;
++                        SDL_zero(rawMode);
++                        rawMode.w = (int)hw;
++                        rawMode.h = (int)hh;
++                        rawMode.refresh_rate = (int)(hh_hz + 0.5);
++                        rawMode.format = display.desktop_mode.format;
++                        display.desktop_mode = rawMode;
++                        display.current_mode = rawMode;
++                        SDL_AddDisplayMode(&display, &rawMode);
++                    }
++                }
++            }
++        } catch (...) {
++            /* Not on Xbox (or no HDMI capability): keep the DXGI-derived mode. */
++        }
++    }
++
+     if (SDL_AddVideoDisplay(&display, SDL_FALSE) < 0) {
+         goto done;
+     }
+@@ -694,14 +733,37 @@
+             /* Attempt to create a window surface using newer versions of
+              * ANGLE/WinRT:
+              */
+-            IInspectable * coreWindowAsIInspectable = reinterpret_cast<IInspectable *>(data->coreWindow.Get());
++            /* renpy-uwp: hand ANGLE a PropertySet with the CoreWindow AND an explicit render
++               surface size, so the swapchain it creates matches the size SDL reports (a
++               report/surface mismatch shows up as a zoomed picture when the HDMI output is 4K).
++               Property names are the documented ones from ANGLE's angle_windowsstore.h. */
++            auto propertySet = ref new Windows::Foundation::Collections::PropertySet();
++            propertySet->Insert(ANGLE_EGLNativeWindowTypeProperty, data->coreWindow.Get());
++            SDL_VideoDisplay *desktopDisplay = SDL_GetDisplayForWindow(window);
++            if (desktopDisplay) {
++                propertySet->Insert(ANGLE_EGLRenderSurfaceSizeProperty,
++                                    ref new Windows::Foundation::Size(
++                                        (float)desktopDisplay->desktop_mode.w,
++                                        (float)desktopDisplay->desktop_mode.h));
++            }
++            IInspectable * propertySetAsIInspectable = reinterpret_cast<IInspectable *>(propertySet);
+             data->egl_surface = _this->egl_data->eglCreateWindowSurface(
+                 _this->egl_data->egl_display,
+                 _this->egl_data->egl_config,
+-                (NativeWindowType)coreWindowAsIInspectable,
++                (NativeWindowType)propertySetAsIInspectable,
+                 NULL);
+             if (data->egl_surface == NULL) {
+-                return SDL_EGL_SetError("unable to create EGL native-window surface", "eglCreateWindowSurface");
++                /* Fall back to the classic path (CoreWindow direct) if this ANGLE build rejects
++                   the property set. */
++                IInspectable * coreWindowAsIInspectable = reinterpret_cast<IInspectable *>(data->coreWindow.Get());
++                data->egl_surface = _this->egl_data->eglCreateWindowSurface(
++                    _this->egl_data->egl_display,
++                    _this->egl_data->egl_config,
++                    (NativeWindowType)coreWindowAsIInspectable,
++                    NULL);
++                if (data->egl_surface == NULL) {
++                    return SDL_EGL_SetError("unable to create EGL native-window surface", "eglCreateWindowSurface");
++                }
+             }
+         } else {
+             return SDL_SetError("No supported means to create an EGL window surface are available");
